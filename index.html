@@ -64,6 +64,25 @@ canvas#c{position:absolute;top:0;left:50%;transform:translateX(-50%);image-rende
 .diffrow{align-items:center}
 .difflabel{font-size:9px;color:var(--dim);width:100%;text-align:center}
 .diffbtn[aria-pressed="true"]{color:var(--gold);border-color:var(--gold);background:#24188c}
+.overlay.dim{overflow-y:auto;justify-content:flex-start}
+.overlay.dim>.nesbox{margin-block:auto}
+.lb{border-top:2px dashed #3c3c3c;margin-top:4px;padding-top:12px;display:grid;gap:10px}
+.lbh{font-size:9px;color:var(--gold);text-align:center;margin:0}
+.lbname{font-family:var(--pixel);font-size:16px;text-transform:uppercase;text-align:center;background:#000;color:var(--gold);border:3px solid var(--fg);border-radius:4px;padding:10px 8px;width:100%;box-sizing:border-box;letter-spacing:1px}
+.lbname:focus{outline:none;border-color:var(--gold)}
+.lbname::placeholder{color:#3c3c3c}
+.slots{display:flex;justify-content:center;gap:14px}
+.slot{display:grid;justify-items:center;gap:6px}
+.slot b{font-size:22px;line-height:1;color:var(--fg);min-width:26px;text-align:center}
+.slot.cur b{color:var(--gold)}
+.arrow{font-family:var(--pixel);font-size:10px;background:#000;color:var(--fg);border:3px solid var(--fg);border-radius:4px;width:38px;height:30px;cursor:pointer;padding:0}
+.arrow:focus-visible{border-color:var(--gold);outline:none}
+#lbOl{margin:0;padding:0;list-style:none;font-size:9px;line-height:2.2;font-variant-numeric:tabular-nums}
+#lbOl li{display:grid;grid-template-columns:2.4em 1fr auto auto;gap:8px}
+#lbOl li span:nth-child(2){overflow:hidden;white-space:nowrap;text-overflow:clip}
+#lbOl li span:last-child{color:var(--dim)}
+#lbOl li.me{color:var(--gold);animation:blink 1s steps(1) infinite}
+#lbMsg{font-size:9px;line-height:1.8;color:var(--dim);text-align:center;margin:0}
 .row{display:flex;gap:10px;flex-wrap:wrap;justify-content:center}
 </style>
 </head>
@@ -103,6 +122,18 @@ canvas#c{position:absolute;top:0;left:50%;transform:translateX(-50%);image-rende
         <p id="eStats"></p>
         <p class="quote" id="eBoss"></p>
         <p class="best" id="eBest"></p>
+        <div class="lb" id="lb">
+          <div id="lbEntry" style="display:grid;gap:10px">
+            <label class="lbh" for="lbName">ENTER YOUR NAME</label>
+            <input id="lbName" class="lbname" type="text" maxlength="10" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false" enterkeyhint="done" placeholder="NAME">
+            <div class="row"><button class="btn small" id="lbSend" type="button">SAVE SCORE</button><button class="btn small" id="lbSkip" type="button">SKIP</button></div>
+          </div>
+          <div id="lbList" style="display:grid;gap:8px" hidden>
+            <p class="lbh" id="lbTitle">TOP 10</p>
+            <ol id="lbOl"></ol>
+          </div>
+          <p id="lbMsg"></p>
+        </div>
         <div class="row"><button class="btn primary" id="again" type="button">► NEW SHIFT</button></div>
       </div>
     </div>
@@ -886,6 +917,71 @@ document.getElementById("mute").addEventListener("click",()=>{audioInit();setMut
 setMuted(SND.muted);
 document.addEventListener("visibilitychange",()=>{if(!SND.ctx)return;if(document.hidden)SND.ctx.suspend();else SND.ctx.resume()});
 
+
+// ---------- online top score board (Supabase) ----------
+const SB_URL="https://azsqriyrikucnsnfpsdq.supabase.co",SB_KEY="sb_publishable_ytGAUoqq_Xc9z28MXEx-LQ_AUxN2fIn";
+// name rules (must match the database): 1-10 characters, A-Z, ÅÄÖ, digits, space and hyphen
+const NAME_RE=/^[A-Z0-9ÅÄÖ]([A-Z0-9ÅÄÖ -]{0,8}[A-Z0-9ÅÄÖ])?$/;
+// blocked as whole words only, so ordinary names like PASI or CLASSY still work
+const BAD_WORDS=["ASS","FUK","FCK","FUC","KKK","SEX","CUM","DIC","DIK","FAG","NIG","NGR","JEW","GAY","TIT","PIS","KYS","WTF","SHT","VIT","PAS","PSK","HOR","NUS","PIL","HUO","KAK","HOMO","PERSE","KAKKA"];
+// blocked anywhere inside the name
+const BAD_PARTS=["FUCK","SHIT","CUNT","NIGG","NIGA","FAGG","BITCH","WHORE","SLUT","DICK","COCK","PUSSY","PENIS","PORN","NAZI","HITLER","RETARD","VITTU","VITU","HUORA","NUSSI","KULLI","PILLU","PASKA","MULKKU","NEEKERI","KYRPÄ","RUNKK"];
+function cleanName(v){return String(v||"").toUpperCase().replace(/[^A-Z0-9ÅÄÖ -]/g,"").replace(/\s+/g," ").replace(/^[ -]+/,"").slice(0,10)}
+function badName(n){if(BAD_PARTS.some(w=>n.includes(w)))return true;return n.split(/[ -]/).some(w=>BAD_WORDS.includes(w))}
+let lbState=null;
+async function sbTop(m){const r=await fetch(SB_URL+"/rest/v1/scores?select=initials,score,level,won&mode=eq."+m+"&order=score.desc,created_at.asc&limit=10",{headers:{apikey:SB_KEY}});if(!r.ok)throw new Error("HTTP "+r.status);return r.json()}
+async function sbAdd(row){const r=await fetch(SB_URL+"/rest/v1/scores",{method:"POST",headers:{apikey:SB_KEY,"Content-Type":"application/json",Prefer:"return=minimal"},body:JSON.stringify(row)});
+  if(!r.ok){let d="";try{const j=await r.json();d=j.code||j.message||""}catch(_){}throw new Error("HTTP "+r.status+(d?" "+d:""))}}
+// explain why saving failed, so the cause is visible on the end screen
+function sbWhy(e){const m=String(e&&e.message||e);
+  if(!/^HTTP/.test(m))return "SAVING FAILED: NO CONNECTION TO THE SCORE BOARD. IN THE CLAUDE.AI VERSION THIS IS EXPECTED; IT WORKS IN THE APP AND ON THE WEB VERSION.";
+  if(/404|42P01|PGRST205/.test(m))return "SAVING FAILED ("+m+"): THE SCORES TABLE WAS NOT FOUND IN THE DATABASE.";
+  if(/401|403|42501/.test(m))return "SAVING FAILED ("+m+"): THE DATABASE DID NOT ALLOW SAVING.";
+  if(/23514|400/.test(m))return "SAVING FAILED ("+m+"): THE DATABASE REJECTED THIS SCORE.";
+  return "SAVING FAILED ("+m+"). TRY AGAIN LATER."}
+function lbMsg(t){document.getElementById("lbMsg").textContent=t||""}
+function lbStart(result){
+  let ini="";try{const v=localStorage.getItem("bottleboy.initials");if(NAME_RE.test(v||""))ini=v}catch(e){}
+  document.getElementById("lbName").value=ini;
+  lbState={row:{score:Math.round(st.money*100),served:st.served,level:levelNow(),mode:DIFF,won:result==="win"},sent:false};
+  document.getElementById("lbEntry").hidden=false;document.getElementById("lbEntry").style.display="grid";
+  document.getElementById("lbList").hidden=true;lbMsg("");
+  const send=document.getElementById("lbSend");send.disabled=false;send.textContent="SAVE SCORE";
+}
+const lbIn=document.getElementById("lbName");
+lbIn.addEventListener("input",()=>{const c=cleanName(lbIn.value);if(c!==lbIn.value)lbIn.value=c;lbMsg("")});
+lbIn.addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();lbIn.blur();document.getElementById("lbSend").click()}});
+async function lbShow(mine){
+  const list=document.getElementById("lbList"),ol=document.getElementById("lbOl");
+  document.getElementById("lbTitle").textContent="TOP 10 · "+DIFF.toUpperCase();
+  ol.innerHTML="";list.hidden=false;list.style.display="grid";lbMsg("LOADING...");
+  try{
+    const rows=await sbTop(DIFF);let found=false;
+    rows.forEach((r,i)=>{const li=document.createElement("li");
+      if(mine&&!found&&r.initials===mine.initials&&r.score===mine.score){li.className="me";found=true}
+      const a=document.createElement("span");a.textContent=(i+1)+".";
+      const b=document.createElement("span");b.textContent=r.initials;
+      const c=document.createElement("span");c.textContent=fmt(r.score/100);
+      const d=document.createElement("span");d.textContent=r.won?"WIN":"LV"+r.level;
+      li.append(a,b,c,d);ol.appendChild(li)});
+    if(!rows.length)lbMsg("NO SCORES YET. BE THE FIRST!");
+    else if(mine&&!found)lbMsg("YOUR SCORE "+fmt(mine.score/100)+" IS NOT IN THE TOP 10 YET.");
+    else lbMsg("");
+  }catch(e){lbMsg("THE TOP SCORE BOARD COULD NOT BE REACHED. IT WORKS IN THE BOTTLE BOY APP WITH AN INTERNET CONNECTION.")}
+}
+document.getElementById("lbSend").addEventListener("click",async()=>{
+  if(!lbState||lbState.sent)return;
+  const ini=cleanName(lbIn.value).trim().replace(/[ -]+$/,"");
+  if(!NAME_RE.test(ini)){lbMsg("TYPE YOUR NAME FIRST: 1-10 LETTERS OR NUMBERS.");lbIn.focus();return}
+  if(badName(ini)){lbMsg("PENTTI: NOT ON MY LEADERBOARD. PICK ANOTHER NAME.");return}
+  const send=document.getElementById("lbSend");send.disabled=true;send.textContent="SAVING...";
+  try{localStorage.setItem("bottleboy.initials",ini)}catch(e){}
+  const row=Object.assign({initials:ini},lbState.row);
+  try{await sbAdd(row);lbState.sent=true;document.getElementById("lbEntry").hidden=true;sfx("fix");lbShow(row)}
+  catch(e){send.disabled=false;send.textContent="TRY AGAIN";lbMsg(sbWhy(e))}
+});
+document.getElementById("lbSkip").addEventListener("click",()=>{if(!lbState)return;document.getElementById("lbEntry").hidden=true;lbShow(null)});
+
 // ---------- flow ----------
 function startGame(){
   reset();mode="play";intro=null;dlg=null;dEl.hidden=true;
@@ -900,7 +996,7 @@ function endGame(result){
   document.getElementById("eStats").textContent=(DIFF==="loser"?"LOSER MODE. ":"")+"You served "+st.served+" customers and collected "+st.collected+" bottles.";
   document.getElementById("eBoss").textContent=result==="win"?"THE END. Rest in peace, Pentti. The bottles keep coming.":result==="lose"?"AI-9000: Pentti has been promoted back to manager. He is unbearable.":"PENTTI: "+BYE[Math.floor(Math.random()*BYE.length)];
   document.getElementById("eBest").textContent=isBest?"NEW RECORD!":"RECORD: "+fmt(best);
-  document.getElementById("end").hidden=false;document.getElementById("again").focus();
+  document.getElementById("end").hidden=false;lbStart(result);
 }
 document.getElementById("go").addEventListener("click",()=>{audioInit();startIntro()});
 document.getElementById("goSkip").addEventListener("click",()=>{audioInit();startLogo()});
