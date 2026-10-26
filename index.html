@@ -68,6 +68,11 @@ canvas#c{position:absolute;top:0;left:50%;transform:translateX(-50%);image-rende
 .overlay.dim>.nesbox{margin-block:auto}
 .lb{border-top:2px dashed #3c3c3c;margin-top:4px;padding-top:12px;display:grid;gap:10px}
 .lbh{font-size:9px;color:var(--gold);text-align:center;margin:0}
+.lbterms{display:flex;gap:8px;align-items:flex-start;font-size:8px;line-height:1.8;color:var(--dim);cursor:pointer}
+.lbterms input{width:18px;height:18px;flex:none;margin:0;accent-color:#f8b800}
+.lbterms a{color:var(--fg)}
+.flag{font-family:var(--pixel);font-size:8px;background:none;border:2px solid #3c3c3c;color:var(--dim);border-radius:3px;padding:2px 4px;cursor:pointer;line-height:1}
+.flag:hover,.flag:focus-visible{color:var(--gold);border-color:var(--gold);outline:none}
 .lbname{font-family:var(--pixel);font-size:16px;text-transform:uppercase;text-align:center;background:#000;color:var(--gold);border:3px solid var(--fg);border-radius:4px;padding:10px 8px;width:100%;box-sizing:border-box;letter-spacing:1px}
 .lbname:focus{outline:none;border-color:var(--gold)}
 .lbname::placeholder{color:#3c3c3c}
@@ -78,7 +83,7 @@ canvas#c{position:absolute;top:0;left:50%;transform:translateX(-50%);image-rende
 .arrow{font-family:var(--pixel);font-size:10px;background:#000;color:var(--fg);border:3px solid var(--fg);border-radius:4px;width:38px;height:30px;cursor:pointer;padding:0}
 .arrow:focus-visible{border-color:var(--gold);outline:none}
 #lbOl{margin:0;padding:0;list-style:none;font-size:9px;line-height:2.2;font-variant-numeric:tabular-nums}
-#lbOl li{display:grid;grid-template-columns:2.4em 1fr auto auto;gap:8px}
+#lbOl li{display:grid;grid-template-columns:2.4em 1fr auto auto auto;gap:8px;align-items:center}
 #lbOl li span:nth-child(2){overflow:hidden;white-space:nowrap;text-overflow:clip}
 #lbOl li span:last-child{color:var(--dim)}
 #lbOl li.me{color:var(--gold);animation:blink 1s steps(1) infinite}
@@ -126,6 +131,7 @@ canvas#c{position:absolute;top:0;left:50%;transform:translateX(-50%);image-rende
           <div id="lbEntry" style="display:grid;gap:10px">
             <label class="lbh" for="lbName">ENTER YOUR NAME</label>
             <input id="lbName" class="lbname" type="text" maxlength="10" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false" enterkeyhint="done" placeholder="NAME">
+            <label class="lbterms" id="lbTermsRow"><input type="checkbox" id="lbTerms"> <span>I ACCEPT THE <a href="terms.html" target="_blank" rel="noopener">BOARD RULES</a>: NO OFFENSIVE NAMES.</span></label>
             <div class="row"><button class="btn small" id="lbSend" type="button">SAVE SCORE</button><button class="btn small" id="lbSkip" type="button">SKIP</button></div>
           </div>
           <div id="lbList" style="display:grid;gap:8px" hidden>
@@ -929,7 +935,7 @@ const BAD_PARTS=["FUCK","SHIT","CUNT","NIGG","NIGA","FAGG","BITCH","WHORE","SLUT
 function cleanName(v){return String(v||"").toUpperCase().replace(/[^A-Z0-9ÅÄÖ -]/g,"").replace(/\s+/g," ").replace(/^[ -]+/,"").slice(0,10)}
 function badName(n){if(BAD_PARTS.some(w=>n.includes(w)))return true;return n.split(/[ -]/).some(w=>BAD_WORDS.includes(w))}
 let lbState=null;
-async function sbTop(m){const r=await fetch(SB_URL+"/rest/v1/scores?select=initials,score,level,won&mode=eq."+m+"&order=score.desc,created_at.asc&limit=10",{headers:{apikey:SB_KEY}});if(!r.ok)throw new Error("HTTP "+r.status);return r.json()}
+async function sbTop(m){const r=await fetch(SB_URL+"/rest/v1/scores?select=id,initials,score,level,won&mode=eq."+m+"&hidden=eq.false&order=score.desc,created_at.asc&limit=20",{headers:{apikey:SB_KEY}});if(!r.ok)throw new Error("HTTP "+r.status);return r.json()}
 async function sbAdd(row){const r=await fetch(SB_URL+"/rest/v1/scores",{method:"POST",headers:{apikey:SB_KEY,"Content-Type":"application/json",Prefer:"return=minimal"},body:JSON.stringify(row)});
   if(!r.ok){let d="";try{const j=await r.json();d=j.code||j.message||""}catch(_){}throw new Error("HTTP "+r.status+(d?" "+d:""))}}
 // explain why saving failed, so the cause is visible on the end screen
@@ -939,10 +945,15 @@ function sbWhy(e){const m=String(e&&e.message||e);
   if(/401|403|42501/.test(m))return "SAVING FAILED ("+m+"): THE DATABASE DID NOT ALLOW SAVING.";
   if(/23514|400/.test(m))return "SAVING FAILED ("+m+"): THE DATABASE REJECTED THIS SCORE.";
   return "SAVING FAILED ("+m+"). TRY AGAIN LATER."}
+async function sbReport(id){const r=await fetch(SB_URL+"/rest/v1/reports",{method:"POST",headers:{apikey:SB_KEY,"Content-Type":"application/json",Prefer:"return=minimal"},body:JSON.stringify({score_id:id})});if(!r.ok)throw new Error("HTTP "+r.status)}
+function blockedIds(){try{return JSON.parse(localStorage.getItem("bottleboy.blocked")||"[]")}catch(e){return []}}
+function blockId(id){const b=blockedIds();if(!b.includes(id))b.push(id);try{localStorage.setItem("bottleboy.blocked",JSON.stringify(b.slice(-200)))}catch(e){}}
+function termsOk(){try{return localStorage.getItem("bottleboy.terms")==="1"}catch(e){return false}}
 function lbMsg(t){document.getElementById("lbMsg").textContent=t||""}
 function lbStart(result){
   let ini="";try{const v=localStorage.getItem("bottleboy.initials");if(NAME_RE.test(v||""))ini=v}catch(e){}
   document.getElementById("lbName").value=ini;
+  const tr=document.getElementById("lbTermsRow");tr.hidden=termsOk();document.getElementById("lbTerms").checked=termsOk();
   lbState={row:{score:Math.round(st.money*100),served:st.served,level:levelNow(),mode:DIFF,won:result==="win"},sent:false};
   document.getElementById("lbEntry").hidden=false;document.getElementById("lbEntry").style.display="grid";
   document.getElementById("lbList").hidden=true;lbMsg("");
@@ -956,14 +967,17 @@ async function lbShow(mine){
   document.getElementById("lbTitle").textContent="TOP 10 · "+DIFF.toUpperCase();
   ol.innerHTML="";list.hidden=false;list.style.display="grid";lbMsg("LOADING...");
   try{
-    const rows=await sbTop(DIFF);let found=false;
+    const bl=blockedIds();const rows=(await sbTop(DIFF)).filter(r=>!bl.includes(r.id)).slice(0,10);let found=false;
     rows.forEach((r,i)=>{const li=document.createElement("li");
       if(mine&&!found&&r.initials===mine.initials&&r.score===mine.score){li.className="me";found=true}
       const a=document.createElement("span");a.textContent=(i+1)+".";
       const b=document.createElement("span");b.textContent=r.initials;
       const c=document.createElement("span");c.textContent=fmt(r.score/100);
       const d=document.createElement("span");d.textContent=r.won?"WIN":"LV"+r.level;
-      li.append(a,b,c,d);ol.appendChild(li)});
+      const f=document.createElement("button");f.type="button";f.className="flag";f.textContent="⚑";f.title="Report and hide this name";f.setAttribute("aria-label","Report "+r.initials);
+      f.addEventListener("click",async()=>{if(f.dataset.armed!=="1"){f.dataset.armed="1";f.textContent="REPORT?";return}
+        f.disabled=true;blockId(r.id);try{await sbReport(r.id)}catch(e){}li.remove();lbMsg("THANKS. THE NAME WAS REPORTED AND HIDDEN FOR YOU.")});
+      li.append(a,b,c,d,f);ol.appendChild(li)});
     if(!rows.length)lbMsg("NO SCORES YET. BE THE FIRST!");
     else if(mine&&!found)lbMsg("YOUR SCORE "+fmt(mine.score/100)+" IS NOT IN THE TOP 10 YET.");
     else lbMsg("");
@@ -974,6 +988,7 @@ document.getElementById("lbSend").addEventListener("click",async()=>{
   const ini=cleanName(lbIn.value).trim().replace(/[ -]+$/,"");
   if(!NAME_RE.test(ini)){lbMsg("TYPE YOUR NAME FIRST: 1-10 LETTERS OR NUMBERS.");lbIn.focus();return}
   if(badName(ini)){lbMsg("PENTTI: NOT ON MY LEADERBOARD. PICK ANOTHER NAME.");return}
+  if(!termsOk()){if(!document.getElementById("lbTerms").checked){lbMsg("PLEASE ACCEPT THE BOARD RULES FIRST.");return}try{localStorage.setItem("bottleboy.terms","1")}catch(e){}}
   const send=document.getElementById("lbSend");send.disabled=true;send.textContent="SAVING...";
   try{localStorage.setItem("bottleboy.initials",ini)}catch(e){}
   const row=Object.assign({initials:ini},lbState.row);
