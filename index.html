@@ -68,6 +68,8 @@ canvas#c{position:absolute;top:0;left:50%;transform:translateX(-50%);image-rende
 .overlay.dim>.nesbox{margin-block:auto}
 .lb{border-top:2px dashed #3c3c3c;margin-top:4px;padding-top:12px;display:grid;gap:10px}
 .lbh{font-size:9px;color:var(--gold);text-align:center;margin:0}
+.lbtab{font-size:8px;padding:6px 10px}
+.lbtab[aria-pressed="true"]{color:var(--gold);border-color:var(--gold);background:#24188c}
 .lbterms{display:flex;gap:8px;align-items:flex-start;font-size:8px;line-height:1.8;color:var(--dim);cursor:pointer}
 .lbterms input{width:18px;height:18px;flex:none;margin:0;accent-color:#f8b800}
 .lbterms a{color:var(--fg)}
@@ -136,6 +138,7 @@ canvas#c{position:absolute;top:0;left:50%;transform:translateX(-50%);image-rende
           </div>
           <div id="lbList" style="display:grid;gap:8px" hidden>
             <p class="lbh" id="lbTitle">TOP 10</p>
+            <div class="row lbtabs" role="group" aria-label="Score board difficulty"><button class="btn small lbtab" type="button" data-m="loser">LOSER</button><button class="btn small lbtab" type="button" data-m="normal">NORMAL</button></div>
             <ol id="lbOl"></ol>
           </div>
           <p id="lbMsg"></p>
@@ -935,7 +938,7 @@ const BAD_PARTS=["FUCK","SHIT","CUNT","NIGG","NIGA","FAGG","BITCH","WHORE","SLUT
 function cleanName(v){return String(v||"").toUpperCase().replace(/[^A-Z0-9ÅÄÖ -]/g,"").replace(/\s+/g," ").replace(/^[ -]+/,"").slice(0,10)}
 function badName(n){if(BAD_PARTS.some(w=>n.includes(w)))return true;return n.split(/[ -]/).some(w=>BAD_WORDS.includes(w))}
 let lbState=null;
-async function sbTop(m){const r=await fetch(SB_URL+"/rest/v1/scores?select=id,initials,score,level,won&mode=eq."+m+"&hidden=eq.false&order=score.desc,created_at.asc&limit=20",{headers:{apikey:SB_KEY}});if(!r.ok)throw new Error("HTTP "+r.status);return r.json()}
+async function sbTop(m){const r=await fetch(SB_URL+"/rest/v1/scores?select=id,initials,score,level,won&mode=eq."+m+"&hidden=eq.false&order=score.desc,created_at.asc&limit=300",{headers:{apikey:SB_KEY}});if(!r.ok)throw new Error("HTTP "+r.status);return r.json()}
 async function sbAdd(row){const r=await fetch(SB_URL+"/rest/v1/scores",{method:"POST",headers:{apikey:SB_KEY,"Content-Type":"application/json",Prefer:"return=minimal"},body:JSON.stringify(row)});
   if(!r.ok){let d="";try{const j=await r.json();d=j.code||j.message||""}catch(_){}throw new Error("HTTP "+r.status+(d?" "+d:""))}}
 // explain why saving failed, so the cause is visible on the end screen
@@ -962,14 +965,22 @@ function lbStart(result){
 const lbIn=document.getElementById("lbName");
 lbIn.addEventListener("input",()=>{const c=cleanName(lbIn.value);if(c!==lbIn.value)lbIn.value=c;lbMsg("")});
 lbIn.addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();lbIn.blur();document.getElementById("lbSend").click()}});
-async function lbShow(mine){
+let lbMode="normal",lbMine=null;
+document.querySelectorAll(".lbtab").forEach(b=>b.addEventListener("click",()=>{lbMode=b.dataset.m;lbShow(lbMine,true)}));
+async function lbShow(mine,keepMode){
+  if(!keepMode){lbMode=DIFF;lbMine=mine&&mine.mode===DIFF?mine:null}
+  mine=lbMode===(lbMine&&lbMine.mode)?lbMine:null;
+  document.querySelectorAll(".lbtab").forEach(b=>b.setAttribute("aria-pressed",String(b.dataset.m===lbMode)));
   const list=document.getElementById("lbList"),ol=document.getElementById("lbOl");
-  document.getElementById("lbTitle").textContent="TOP 10 · "+DIFF.toUpperCase();
+  document.getElementById("lbTitle").textContent="TOP 10 PLAYERS · "+lbMode.toUpperCase();
   ol.innerHTML="";list.hidden=false;list.style.display="grid";lbMsg("LOADING...");
   try{
-    const bl=blockedIds();const rows=(await sbTop(DIFF)).filter(r=>!bl.includes(r.id)).slice(0,10);let found=false;
+    // one row per player: keep each name's best score only
+    const bl=blockedIds(),seen=new Set(),rows=[];
+    for(const r of await sbTop(lbMode)){if(bl.includes(r.id)||seen.has(r.initials))continue;seen.add(r.initials);rows.push(r);if(rows.length>=10)break}
+    let found=false,mineBest=null;
     rows.forEach((r,i)=>{const li=document.createElement("li");
-      if(mine&&!found&&r.initials===mine.initials&&r.score===mine.score){li.className="me";found=true}
+      if(mine&&!found&&r.initials===mine.initials){li.className="me";found=true;mineBest=r.score}
       const a=document.createElement("span");a.textContent=(i+1)+".";
       const b=document.createElement("span");b.textContent=r.initials;
       const c=document.createElement("span");c.textContent=fmt(r.score/100);
@@ -980,6 +991,7 @@ async function lbShow(mine){
       li.append(a,b,c,d,f);ol.appendChild(li)});
     if(!rows.length)lbMsg("NO SCORES YET. BE THE FIRST!");
     else if(mine&&!found)lbMsg("YOUR SCORE "+fmt(mine.score/100)+" IS NOT IN THE TOP 10 YET.");
+    else if(mine&&found&&mineBest>mine.score)lbMsg("THE BOARD SHOWS YOUR BEST SCORE, "+fmt(mineBest/100)+".");
     else lbMsg("");
   }catch(e){lbMsg("THE TOP SCORE BOARD COULD NOT BE REACHED. IT WORKS IN THE BOTTLE BOY APP WITH AN INTERNET CONNECTION.")}
 }
